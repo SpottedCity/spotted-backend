@@ -1,0 +1,245 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// User model
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String?  // nullable for OAuth users
+  firstName String?
+  lastName  String?
+  avatar    String?
+  bio       String?
+
+  // OAuth
+  googleId  String?  @unique
+  
+  // User preferences
+  selectedCityId String?
+  selectedCity   City?     @relation("UserSelectedCity", fields: [selectedCityId], references: [id])
+
+  // Relations
+  posts     Post[]
+  comments  Comment[]
+  votes     Vote[]
+  reputation UserReputation?
+  flags     Flag[]
+  subscriptions Subscription[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([email])
+  @@index([googleId])
+}
+
+// Cities and regions
+model City {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  voivodeship String
+  latitude  Float
+  longitude Float
+  
+  // PostGIS geometry (stored as JSON for now, can be optimized)
+  bounds    Json?  // {minLat, maxLat, minLng, maxLng}
+
+  posts     Post[]
+  users     User[]   @relation("UserSelectedCity")
+
+  createdAt DateTime @default(now())
+
+  @@index([name])
+  @@index([voivodeship])
+}
+
+// Categories for posts
+model Category {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  slug      String   @unique
+  color     String?
+  icon      String?
+  
+  posts     Post[]
+  subscriptions Subscription[]
+
+  createdAt DateTime @default(now())
+
+  @@index([slug])
+}
+
+// Main Post/Report model
+model Post {
+  id        String   @id @default(cuid())
+  title     String
+  description String
+  
+  // Author
+  authorId  String
+  author    User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  // Location
+  cityId    String
+  city      City     @relation(fields: [cityId], references: [id])
+  latitude  Float
+  longitude Float
+
+  // Category
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id])
+
+  // Content
+  imageUrl  String?
+  images    String[] // URLs to multiple images in Supabase
+
+  // Stats
+  upvotes   Int      @default(0)
+  downvotes Int      @default(0)
+  
+  // Status
+  isActive  Boolean  @default(true)
+  isPinned  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  expiresAt DateTime? // For auto-expiring posts
+
+  // Relations
+  comments  Comment[]
+  votes     Vote[]
+  flags     Flag[]
+  subscriptions Subscription[]
+
+  @@index([authorId])
+  @@index([cityId])
+  @@index([categoryId])
+  @@index([createdAt])
+  @@index([latitude, longitude]) // For geospatial queries
+}
+
+// Comments on posts
+model Comment {
+  id        String   @id @default(cuid())
+  content   String
+  
+  // Author
+  authorId  String
+  author    User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  // Post
+  postId    String
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  // Replies
+  parentId  String?
+  parent    Comment? @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies   Comment[] @relation("CommentReplies")
+
+  // Stats
+  upvotes   Int      @default(0)
+  downvotes Int      @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([authorId])
+  @@index([postId])
+  @@index([parentId])
+}
+
+// Votes on posts and comments
+model Vote {
+  id        String   @id @default(cuid())
+  
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  postId    String?
+  post      Post?    @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  commentId String?
+  comment   Comment? @relation(fields: [commentId], references: [id], onDelete: Cascade)
+
+  value     Int      // 1 for upvote, -1 for downvote
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, postId, commentId])
+  @@index([userId])
+  @@index([postId])
+  @@index([commentId])
+}
+
+// User reputation/credibility
+model UserReputation {
+  id        String   @id @default(cuid())
+  
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  score     Float    @default(0) // Reputation score
+  
+  // Counters for reputation calculation
+  totalPosts Int     @default(0)
+  totalUpvotes Int   @default(0)
+  totalDownvotes Int @default(0)
+  dataAccuracy Float @default(0.5) // 0-1 scale
+
+  updatedAt DateTime @updatedAt
+
+  @@index([score])
+}
+
+// Flags/Reports for inappropriate content
+model Flag {
+  id        String   @id @default(cuid())
+  
+  reporterId String
+  reporter   User     @relation(fields: [reporterId], references: [id], onDelete: Cascade)
+
+  postId    String
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  reason    String   // e.g., "spam", "inappropriate", "false_information"
+  description String?
+
+  status    String   @default("pending") // pending, resolved, dismissed
+  resolvedBy String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([postId])
+  @@index([reporterId])
+  @@index([status])
+}
+
+// Subscriptions to posts/categories
+model Subscription {
+  id        String   @id @default(cuid())
+  
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  postId    String?
+  post      Post?    @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  categoryId String?
+  category   Category? @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, postId])
+  @@index([userId])
+  @@index([postId])
+}
