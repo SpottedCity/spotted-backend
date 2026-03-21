@@ -18,7 +18,10 @@ export class UploadsController {
   @Post('image')
   @UseGuards(JwtAuthGuard)
   @UseInterceptors(FileInterceptor('file'))
-  async uploadImage(@UploadedFile() file: Express.Multer.File, @UserId() userId: string) {
+  async uploadImage(
+      @UploadedFile() file: Express.Multer.File,
+      @UserId() userId: string,
+  ) {
     const url = await this.uploadsService.uploadImage(file, `posts/${userId}`);
     return { url };
   }
@@ -26,7 +29,10 @@ export class UploadsController {
   @Post('images')
   @UseGuards(JwtAuthGuard)
   @UseInterceptors(FilesInterceptor('files'))
-  async uploadMultiple(@UploadedFiles() files: Express.Multer.File[], @UserId() userId: string) {
+  async uploadMultiple(
+      @UploadedFiles() files: Express.Multer.File[],
+      @UserId() userId: string,
+  ) {
     const urls = await this.uploadsService.uploadMultiple(files, `posts/${userId}`);
     return { urls };
   }
@@ -34,7 +40,10 @@ export class UploadsController {
   @Post('avatar')
   @UseGuards(JwtAuthGuard)
   @UseInterceptors(FileInterceptor('file'))
-  async uploadAvatar(@UploadedFile() file: Express.Multer.File, @UserId() userId: string) {
+  async uploadAvatar(
+      @UploadedFile() file: Express.Multer.File,
+      @UserId() userId: string,
+  ) {
     const url = await this.uploadsService.uploadImage(file, `avatars/${userId}`);
     return { url };
   }

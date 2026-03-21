@@ -7,14 +7,13 @@ import { SignUpDto, SignInDto, GoogleAuthDto } from './dto/auth.validation';
 @Injectable()
 export class AuthService {
   constructor(
-    private prisma: PrismaService,
-    private jwtService: JwtService,
+      private prisma: PrismaService,
+      private jwtService: JwtService,
   ) {}
 
   async signUp(signUpDto: SignUpDto) {
     const { email, password, firstName, lastName } = signUpDto;
 
-    // Check if user already exists
     const existingUser = await this.prisma.user.findUnique({
       where: { email },
     });
@@ -23,10 +22,8 @@ export class AuthService {
       throw new UnauthorizedException('User with this email already exists');
     }
 
-    // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Create user
     const user = await this.prisma.user.create({
       data: {
         email,
@@ -46,7 +43,6 @@ export class AuthService {
       },
     });
 
-    // Generate token
     const accessToken = this.jwtService.sign({
       sub: user.id,
       email: user.email,
@@ -61,23 +57,20 @@ export class AuthService {
   async signIn(signInDto: SignInDto) {
     const { email, password } = signInDto;
 
-    // Find user
     const user = await this.prisma.user.findUnique({
       where: { email },
     });
 
-    if (!user) {
+    if (!user || !user.password) {
       throw new UnauthorizedException('Invalid email or password');
     }
 
-    // Verify password
     const isPasswordValid = await bcrypt.compare(password, user.password);
 
     if (!isPasswordValid) {
       throw new UnauthorizedException('Invalid email or password');
     }
 
-    // Generate token
     const accessToken = this.jwtService.sign({
       sub: user.id,
       email: user.email,
@@ -98,20 +91,25 @@ export class AuthService {
   async googleAuth(googleAuthDto: GoogleAuthDto) {
     const { googleId, email, firstName, lastName, avatar } = googleAuthDto;
 
-    // Try to find user by googleId first
-    let user = await this.prisma.user.findUnique({
+    let dbUser = await this.prisma.user.findUnique({
       where: { googleId },
     });
 
-    // If not found, try by email
-    if (!user) {
-      user = await this.prisma.user.findUnique({
+    if (!dbUser) {
+      dbUser = await this.prisma.user.findUnique({
         where: { email },
       });
     }
 
-    // If still not found, create new user
-    if (!user) {
+    let user: {
+      id: string;
+      email: string;
+      firstName: string | null;
+      lastName: string | null;
+      avatar: string | null;
+    };
+
+    if (!dbUser) {
       user = await this.prisma.user.create({
         data: {
           email,
@@ -132,12 +130,11 @@ export class AuthService {
         },
       });
     } else {
-      // Update existing user with Google info if not present
       user = await this.prisma.user.update({
-        where: { id: user.id },
+        where: { id: dbUser.id },
         data: {
-          googleId: googleId || user.googleId,
-          avatar: avatar || user.avatar,
+          googleId: googleId || dbUser.googleId,
+          avatar: avatar || dbUser.avatar,
         },
         select: {
           id: true,
@@ -149,7 +146,6 @@ export class AuthService {
       });
     }
 
-    // Generate token
     const accessToken = this.jwtService.sign({
       sub: user.id,
       email: user.email,
