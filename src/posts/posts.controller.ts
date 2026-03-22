@@ -24,39 +24,39 @@ export class PostsController {
     return this.postsService.createPost(userId, createPostDto);
   }
 
-  @Get(':id')
-  async getPostById(@Param('id') id: string) {
-    return this.postsService.getPostById(id);
-  }
-
   @Get('city/:cityId')
   async getPostsByCity(
-    @Param('cityId') cityId: string,
-    @Query('limit') limit?: string,
-    @Query('skip') skip?: string,
-    @Query('categoryId') categoryId?: string,
+      @Param('cityId') cityId: string,
+      @Query('limit') limit?: string,
+      @Query('skip') skip?: string,
+      @Query('categoryId') categoryId?: string,
   ) {
     return this.postsService.getPostsByCity(
-      cityId,
-      limit ? parseInt(limit) : 20,
-      skip ? parseInt(skip) : 0,
-      categoryId,
+        cityId,
+        limit ? parseInt(limit) : 20,
+        skip ? parseInt(skip) : 0,
+        categoryId,
     );
   }
 
   @Get('nearby')
   async getNearbyPosts(
-    @Query('latitude') latitude?: string,
-    @Query('longitude') longitude?: string,
-    @Query('radius') radius?: string,
-    @Query('limit') limit?: string,
+      @Query('latitude') latitude?: string,
+      @Query('longitude') longitude?: string,
+      @Query('radius') radius?: string,
+      @Query('limit') limit?: string,
   ) {
     return this.postsService.getNearbyPosts(
-      latitude ? parseFloat(latitude) : 0,
-      longitude ? parseFloat(longitude) : 0,
-      radius ? parseFloat(radius) : 5,
-      limit ? parseInt(limit) : 20,
+        latitude ? parseFloat(latitude) : 0,
+        longitude ? parseFloat(longitude) : 0,
+        radius ? parseFloat(radius) : 5,
+        limit ? parseInt(limit) : 20,
     );
+  }
+
+  @Get(':id')
+  async getPostById(@Param('id') id: string) {
+    return this.postsService.getPostById(id);
   }
 
   @Put(':id')

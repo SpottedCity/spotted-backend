@@ -1,97 +1,119 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { CreateVoteDto } from './dto/create-vote.dto';
 
 @Injectable()
 export class VotesService {
   constructor(private prisma: PrismaService) {}
 
   async voteOnPost(userId: string, postId: string, value: number) {
-    // Validate value
     if (value !== 1 && value !== -1) {
       throw new BadRequestException('Vote value must be 1 or -1');
     }
 
-    // Check if vote already exists
-    const existingVote = await this.prisma.vote.findUnique({
+    const post = await this.prisma.post.findUnique({
+      where: { id: postId },
+    });
+
+    if (!post) {
+      throw new NotFoundException('Post not found');
+    }
+
+    // NIE findUnique z nullami, tylko findFirst
+    const existingVote = await this.prisma.vote.findFirst({
       where: {
-        userId_postId_commentId: {
-          userId,
-          postId,
-          commentId: null,
-        },
+        userId,
+        postId,
+        commentId: null,
       },
     });
 
-    if (existingVote) {
-      // Update vote
-      if (existingVote.value === value) {
-        // Remove vote if same
-        return this.prisma.vote.delete({
+    // toggle off - ten sam głos kliknięty drugi raz usuwa głos i cofa licznik
+    if (existingVote && existingVote.value === value) {
+      await this.prisma.$transaction([
+        this.prisma.vote.delete({
           where: { id: existingVote.id },
-        });
-      }
+        }),
+        this.prisma.post.update({
+          where: { id: postId },
+          data:
+              value === 1
+                  ? { upvotes: { decrement: 1 } }
+                  : { downvotes: { decrement: 1 } },
+        }),
+      ]);
 
-      // Update vote value
-      const oldValue = existingVote.value;
-      const newValue = value;
-
-      await this.prisma.vote.update({
-        where: { id: existingVote.id },
-        data: { value },
+      return this.prisma.post.findUnique({
+        where: { id: postId },
+        include: {
+          author: true,
+          category: true,
+          comments: true,
+        },
       });
+    }
 
-      // Update post stats
-      if (oldValue === 1) {
-        await this.prisma.post.update({
+    // zmiana głosu z 1 -> -1 albo -1 -> 1
+    if (existingVote) {
+      await this.prisma.$transaction([
+        this.prisma.vote.update({
+          where: { id: existingVote.id },
+          data: { value },
+        }),
+        this.prisma.post.update({
           where: { id: postId },
-          data: { upvotes: { decrement: 1 } },
-        });
-      } else {
-        await this.prisma.post.update({
-          where: { id: postId },
-          data: { downvotes: { decrement: 1 } },
-        });
-      }
+          data:
+              existingVote.value === 1 && value === -1
+                  ? {
+                    upvotes: { decrement: 1 },
+                    downvotes: { increment: 1 },
+                  }
+                  : {
+                    upvotes: { increment: 1 },
+                    downvotes: { decrement: 1 },
+                  },
+        }),
+      ]);
 
-      if (newValue === 1) {
-        await this.prisma.post.update({
-          where: { id: postId },
-          data: { upvotes: { increment: 1 } },
-        });
-      } else {
-        await this.prisma.post.update({
-          where: { id: postId },
-          data: { downvotes: { increment: 1 } },
-        });
-      }
-    } else {
-      // Create new vote
-      await this.prisma.vote.create({
+      return this.prisma.post.findUnique({
+        where: { id: postId },
+        include: {
+          author: true,
+          category: true,
+          comments: true,
+        },
+      });
+    }
+
+    // nowy głos
+    await this.prisma.$transaction([
+      this.prisma.vote.create({
         data: {
           userId,
           postId,
+          commentId: null,
           value,
         },
-      });
-
-      // Update post stats
-      if (value === 1) {
-        await this.prisma.post.update({
-          where: { id: postId },
-          data: { upvotes: { increment: 1 } },
-        });
-      } else {
-        await this.prisma.post.update({
-          where: { id: postId },
-          data: { downvotes: { increment: 1 } },
-        });
-      }
-    }
+      }),
+      this.prisma.post.update({
+        where: { id: postId },
+        data:
+            value === 1
+                ? { upvotes: { increment: 1 } }
+                : { downvotes: { increment: 1 } },
+      }),
+    ]);
 
     return this.prisma.post.findUnique({
       where: { id: postId },
-      select: { upvotes: true, downvotes: true },
+      include: {
+        author: true,
+        category: true,
+        comments: true,
+      },
     });
   }
 
@@ -100,79 +122,115 @@ export class VotesService {
       throw new BadRequestException('Vote value must be 1 or -1');
     }
 
-    const existingVote = await this.prisma.vote.findUnique({
+    const comment = await this.prisma.comment.findUnique({
+      where: { id: commentId },
+    });
+
+    if (!comment) {
+      throw new NotFoundException('Comment not found');
+    }
+
+    // NIE findUnique z nullami, tylko findFirst
+    const existingVote = await this.prisma.vote.findFirst({
       where: {
-        userId_postId_commentId: {
-          userId,
-          postId: null,
-          commentId,
-        },
+        userId,
+        postId: null,
+        commentId,
       },
     });
 
-    if (existingVote) {
-      if (existingVote.value === value) {
-        return this.prisma.vote.delete({
+    // toggle off
+    if (existingVote && existingVote.value === value) {
+      await this.prisma.$transaction([
+        this.prisma.vote.delete({
           where: { id: existingVote.id },
-        });
-      }
+        }),
+        this.prisma.comment.update({
+          where: { id: commentId },
+          data:
+              value === 1
+                  ? { upvotes: { decrement: 1 } }
+                  : { downvotes: { decrement: 1 } },
+        }),
+      ]);
 
-      const oldValue = existingVote.value;
-      const newValue = value;
-
-      await this.prisma.vote.update({
-        where: { id: existingVote.id },
-        data: { value },
+      return this.prisma.comment.findUnique({
+        where: { id: commentId },
+        include: {
+          author: true,
+          replies: {
+            include: {
+              author: true,
+            },
+          },
+        },
       });
+    }
 
-      if (oldValue === 1) {
-        await this.prisma.comment.update({
+    // zmiana głosu
+    if (existingVote) {
+      await this.prisma.$transaction([
+        this.prisma.vote.update({
+          where: { id: existingVote.id },
+          data: { value },
+        }),
+        this.prisma.comment.update({
           where: { id: commentId },
-          data: { upvotes: { decrement: 1 } },
-        });
-      } else {
-        await this.prisma.comment.update({
-          where: { id: commentId },
-          data: { downvotes: { decrement: 1 } },
-        });
-      }
+          data:
+              existingVote.value === 1 && value === -1
+                  ? {
+                    upvotes: { decrement: 1 },
+                    downvotes: { increment: 1 },
+                  }
+                  : {
+                    upvotes: { increment: 1 },
+                    downvotes: { decrement: 1 },
+                  },
+        }),
+      ]);
 
-      if (newValue === 1) {
-        await this.prisma.comment.update({
-          where: { id: commentId },
-          data: { upvotes: { increment: 1 } },
-        });
-      } else {
-        await this.prisma.comment.update({
-          where: { id: commentId },
-          data: { downvotes: { increment: 1 } },
-        });
-      }
-    } else {
-      await this.prisma.vote.create({
+      return this.prisma.comment.findUnique({
+        where: { id: commentId },
+        include: {
+          author: true,
+          replies: {
+            include: {
+              author: true,
+            },
+          },
+        },
+      });
+    }
+
+    // nowy głos
+    await this.prisma.$transaction([
+      this.prisma.vote.create({
         data: {
           userId,
+          postId: null,
           commentId,
           value,
         },
-      });
-
-      if (value === 1) {
-        await this.prisma.comment.update({
-          where: { id: commentId },
-          data: { upvotes: { increment: 1 } },
-        });
-      } else {
-        await this.prisma.comment.update({
-          where: { id: commentId },
-          data: { downvotes: { increment: 1 } },
-        });
-      }
-    }
+      }),
+      this.prisma.comment.update({
+        where: { id: commentId },
+        data:
+            value === 1
+                ? { upvotes: { increment: 1 } }
+                : { downvotes: { increment: 1 } },
+      }),
+    ]);
 
     return this.prisma.comment.findUnique({
       where: { id: commentId },
-      select: { upvotes: true, downvotes: true },
+      include: {
+        author: true,
+        replies: {
+          include: {
+            author: true,
+          },
+        },
+      },
     });
   }
 }

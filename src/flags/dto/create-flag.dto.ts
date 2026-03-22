@@ -1,4 +1,4 @@
-import { IsString } from 'class-validator';
+import { IsOptional, IsString } from 'class-validator';
 
 export class CreateFlagDto {
   @IsString()
@@ -7,6 +7,7 @@ export class CreateFlagDto {
   @IsString()
   reason: string;
 
+  @IsOptional()
   @IsString()
   description?: string;
 }

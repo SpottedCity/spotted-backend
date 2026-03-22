@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateFlagDto } from './dto/create-flag.dto';
 
@@ -7,6 +7,18 @@ export class FlagsService {
   constructor(private prisma: PrismaService) {}
 
   async createFlag(reporterId: string, createFlagDto: CreateFlagDto) {
+    const existing = await this.prisma.flag.findFirst({
+      where: {
+        reporterId,
+        postId: createFlagDto.postId,
+        status: 'pending',
+      },
+    });
+
+    if (existing) {
+      throw new BadRequestException('Flag already exists for this post');
+    }
+
     return this.prisma.flag.create({
       data: {
         ...createFlagDto,
