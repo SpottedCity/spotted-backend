@@ -27,20 +27,5 @@ export class SignInDto {
 
 export class GoogleAuthDto {
   @IsString()
-  googleId: string;
-
-  @IsEmail()
-  email: string;
-
-  @IsOptional()
-  @IsString()
-  firstName?: string;
-
-  @IsOptional()
-  @IsString()
-  lastName?: string;
-
-  @IsOptional()
-  @IsString()
-  avatar?: string;
+  idToken: string;
 }

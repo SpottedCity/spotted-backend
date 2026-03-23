@@ -1,6 +1,7 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
+import { OAuth2Client } from 'google-auth-library';
 import { PrismaService } from '../prisma/prisma.service';
 import { SignUpDto, SignInDto, GoogleAuthDto } from './dto/auth.validation';
 
@@ -88,8 +89,36 @@ export class AuthService {
     };
   }
 
+  private googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+
   async googleAuth(googleAuthDto: GoogleAuthDto) {
-    const { googleId, email, firstName, lastName, avatar } = googleAuthDto;
+    const { idToken } = googleAuthDto;
+
+    let payload;
+    try {
+      const ticket = await this.googleClient.verifyIdToken({
+        idToken,
+        audience: process.env.GOOGLE_CLIENT_ID,
+      });
+      payload = ticket.getPayload();
+    } catch (error) {
+      throw new UnauthorizedException('Invalid Google ID token');
+    }
+
+    if (!payload || !payload.email || !payload.sub) {
+      throw new UnauthorizedException('Invalid token payload');
+    }
+
+    if (!payload.email_verified) {
+      throw new UnauthorizedException('Email is not verified by Google');
+    }
+
+    const googleId = payload.sub;
+    const email = payload.email;
+    // given_name might be undefined, fallback to null for prisma
+    const firstName = payload.given_name || null;
+    const lastName = payload.family_name || null;
+    const avatar = payload.picture || null;
 
     let dbUser = await this.prisma.user.findUnique({
       where: { googleId },
