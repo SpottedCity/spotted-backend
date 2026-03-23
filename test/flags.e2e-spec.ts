@@ -13,6 +13,7 @@ describe('FlagsController (e2e)', () => {
     const CREATE_FLAG_ROUTE = '/flags';
     const FLAG_LIST_ROUTE = '/flags';
     const FLAGS_BY_POST_ROUTE = (postId: string) => `/flags/post/${postId}`;
+    const UPDATE_FLAG_ROUTE = (id: string) => `/flags/${id}`;
 
     const cleanupDb = async () => {
         await prisma.subscription.deleteMany();
@@ -110,6 +111,7 @@ describe('FlagsController (e2e)', () => {
         cityId: string;
         title?: string;
         description?: string;
+        isActive?: boolean;
     }) => {
         return prisma.post.create({
             data: {
@@ -119,7 +121,7 @@ describe('FlagsController (e2e)', () => {
                 longitude: 18.0084,
                 imageUrl: null,
                 images: [],
-                isActive: true,
+                isActive: params.isActive ?? true,
                 upvotes: 0,
                 downvotes: 0,
                 authorId: params.authorId,
@@ -179,6 +181,7 @@ describe('FlagsController (e2e)', () => {
             expect(flagInDb).toBeDefined();
             expect(flagInDb?.reporterId).toBe(reporter.user.id);
             expect(flagInDb?.postId).toBe(post.id);
+            expect(flagInDb?.status).toBe('pending');
         });
 
         it('should reject duplicate flag on same post from same user', async () => {
@@ -236,6 +239,43 @@ describe('FlagsController (e2e)', () => {
             expect(res.body[0].postId).toBe(post.id);
         });
 
+        it('should filter flags by status query', async () => {
+            const owner = await signUpUser();
+            const reporter = await signUpUser();
+            const category = await createCategory();
+            const city = await createCity();
+            const post = await seedPost({
+                authorId: owner.user.id,
+                categoryId: category.id,
+                cityId: city.id,
+            });
+
+            await prisma.flag.createMany({
+                data: [
+                    {
+                        reporterId: reporter.user.id,
+                        postId: post.id,
+                        reason: 'spam',
+                        status: 'pending',
+                    },
+                    {
+                        reporterId: reporter.user.id,
+                        postId: post.id,
+                        reason: 'fake',
+                        status: 'dismissed',
+                    },
+                ],
+            });
+
+            const res = await request(app.getHttpServer())
+                .get(`${FLAG_LIST_ROUTE}?status=dismissed`)
+                .expect(200);
+
+            expect(Array.isArray(res.body)).toBe(true);
+            expect(res.body.length).toBe(1);
+            expect(res.body[0].status).toBe('dismissed');
+        });
+
         it('should return flags by post', async () => {
             const owner = await signUpUser();
             const reporter = await signUpUser();
@@ -263,6 +303,123 @@ describe('FlagsController (e2e)', () => {
             expect(Array.isArray(res.body)).toBe(true);
             expect(res.body.length).toBe(1);
             expect(res.body[0].postId).toBe(post.id);
+        });
+    });
+
+    describe('PATCH /flags/:id', () => {
+        it('should reject resolving flag without token', async () => {
+            const owner = await signUpUser();
+            const reporter = await signUpUser();
+            const category = await createCategory();
+            const city = await createCity();
+            const post = await seedPost({
+                authorId: owner.user.id,
+                categoryId: category.id,
+                cityId: city.id,
+            });
+
+            const flag = await prisma.flag.create({
+                data: {
+                    reporterId: reporter.user.id,
+                    postId: post.id,
+                    reason: 'spam',
+                },
+            });
+
+            await request(app.getHttpServer())
+                .patch(UPDATE_FLAG_ROUTE(flag.id))
+                .send({ status: 'resolved' })
+                .expect(401);
+        });
+
+        it('should resolve flag and disable post', async () => {
+            const owner = await signUpUser();
+            const reporter = await signUpUser();
+            const moderator = await signUpUser();
+            const category = await createCategory();
+            const city = await createCity();
+            const post = await seedPost({
+                authorId: owner.user.id,
+                categoryId: category.id,
+                cityId: city.id,
+                isActive: true,
+            });
+
+            const flag = await prisma.flag.create({
+                data: {
+                    reporterId: reporter.user.id,
+                    postId: post.id,
+                    reason: 'spam',
+                },
+            });
+
+            const res = await request(app.getHttpServer())
+                .patch(UPDATE_FLAG_ROUTE(flag.id))
+                .set('Authorization', `Bearer ${moderator.token}`)
+                .send({ status: 'resolved' })
+                .expect(200);
+
+            expect(res.body.id).toBe(flag.id);
+            expect(res.body.status).toBe('resolved');
+            expect(res.body.resolvedBy).toBe(moderator.user.id);
+
+            const flagInDb = await prisma.flag.findUnique({
+                where: { id: flag.id },
+            });
+            const postInDb = await prisma.post.findUnique({
+                where: { id: post.id },
+            });
+
+            expect(flagInDb?.status).toBe('resolved');
+            expect(flagInDb?.resolvedBy).toBe(moderator.user.id);
+            expect(postInDb?.isActive).toBe(false);
+        });
+
+        it('should dismiss flag and keep post active', async () => {
+            const owner = await signUpUser();
+            const reporter = await signUpUser();
+            const moderator = await signUpUser();
+            const category = await createCategory();
+            const city = await createCity();
+            const post = await seedPost({
+                authorId: owner.user.id,
+                categoryId: category.id,
+                cityId: city.id,
+                isActive: true,
+            });
+
+            const flag = await prisma.flag.create({
+                data: {
+                    reporterId: reporter.user.id,
+                    postId: post.id,
+                    reason: 'false_information',
+                },
+            });
+
+            const res = await request(app.getHttpServer())
+                .patch(UPDATE_FLAG_ROUTE(flag.id))
+                .set('Authorization', `Bearer ${moderator.token}`)
+                .send({ status: 'dismissed' })
+                .expect(200);
+
+            expect(res.body.status).toBe('dismissed');
+            expect(res.body.resolvedBy).toBe(moderator.user.id);
+
+            const postInDb = await prisma.post.findUnique({
+                where: { id: post.id },
+            });
+
+            expect(postInDb?.isActive).toBe(true);
+        });
+
+        it('should return 404 for non-existing flag', async () => {
+            const moderator = await signUpUser();
+
+            await request(app.getHttpServer())
+                .patch(UPDATE_FLAG_ROUTE('missing-flag-id'))
+                .set('Authorization', `Bearer ${moderator.token}`)
+                .send({ status: 'resolved' })
+                .expect(404);
         });
     });
 });

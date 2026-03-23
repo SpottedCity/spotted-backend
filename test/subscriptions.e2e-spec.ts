@@ -92,7 +92,42 @@ describe('SubscriptionsController (e2e)', () => {
         });
     };
 
-    describe('category subscriptions', () => {
+    const createCity = async () => {
+        const n = uid();
+        return prisma.city.create({
+            data: {
+                name: `Miasto-${n}`,
+                voivodeship: 'kujawsko-pomorskie',
+                latitude: 53.1235,
+                longitude: 18.0084,
+            },
+        });
+    };
+
+    const seedPost = async (params: {
+        authorId: string;
+        categoryId: string;
+        cityId: string;
+    }) => {
+        return prisma.post.create({
+            data: {
+                title: 'Seed post',
+                description: 'Seed description',
+                latitude: 53.1235,
+                longitude: 18.0084,
+                imageUrl: null,
+                images: [],
+                isActive: true,
+                upvotes: 0,
+                downvotes: 0,
+                authorId: params.authorId,
+                categoryId: params.categoryId,
+                cityId: params.cityId,
+            },
+        });
+    };
+
+    describe('POST /subscriptions', () => {
         it('should reject subscribe without token', async () => {
             const category = await createCategory();
 
@@ -100,6 +135,16 @@ describe('SubscriptionsController (e2e)', () => {
                 .post(CREATE_SUBSCRIPTION_ROUTE)
                 .send({ categoryId: category.id })
                 .expect(401);
+        });
+
+        it('should reject empty subscription payload', async () => {
+            const user = await signUpUser();
+
+            await request(app.getHttpServer())
+                .post(CREATE_SUBSCRIPTION_ROUTE)
+                .set('Authorization', `Bearer ${user.token}`)
+                .send({})
+                .expect(400);
         });
 
         it('should subscribe authenticated user to category', async () => {
@@ -126,6 +171,36 @@ describe('SubscriptionsController (e2e)', () => {
             expect(subInDb?.categoryId).toBe(category.id);
         });
 
+        it('should subscribe authenticated user to post', async () => {
+            const owner = await signUpUser();
+            const subscriber = await signUpUser();
+            const category = await createCategory();
+            const city = await createCity();
+            const post = await seedPost({
+                authorId: owner.user.id,
+                categoryId: category.id,
+                cityId: city.id,
+            });
+
+            const res = await request(app.getHttpServer())
+                .post(CREATE_SUBSCRIPTION_ROUTE)
+                .set('Authorization', `Bearer ${subscriber.token}`)
+                .send({ postId: post.id })
+                .expect(201);
+
+            expect(res.body.postId).toBe(post.id);
+            expect(res.body.userId).toBe(subscriber.user.id);
+
+            const subInDb = await prisma.subscription.findFirst({
+                where: {
+                    userId: subscriber.user.id,
+                    postId: post.id,
+                },
+            });
+
+            expect(subInDb).toBeDefined();
+        });
+
         it('should reject duplicate category subscription from same user', async () => {
             const user = await signUpUser();
             const category = await createCategory();
@@ -142,7 +217,59 @@ describe('SubscriptionsController (e2e)', () => {
                 .send({ categoryId: category.id })
                 .expect(400);
         });
+    });
 
+    describe('GET /subscriptions', () => {
+        it('should return empty array for user without subscriptions', async () => {
+            const user = await signUpUser();
+
+            const res = await request(app.getHttpServer())
+                .get(MY_SUBSCRIPTIONS_ROUTE)
+                .set('Authorization', `Bearer ${user.token}`)
+                .expect(200);
+
+            expect(Array.isArray(res.body)).toBe(true);
+            expect(res.body).toEqual([]);
+        });
+
+        it('should return current user subscriptions with relations', async () => {
+            const owner = await signUpUser();
+            const user = await signUpUser();
+            const category = await createCategory();
+            const city = await createCity();
+            const post = await seedPost({
+                authorId: owner.user.id,
+                categoryId: category.id,
+                cityId: city.id,
+            });
+
+            await prisma.subscription.createMany({
+                data: [
+                    { userId: user.user.id, categoryId: category.id },
+                    { userId: user.user.id, postId: post.id },
+                ],
+            });
+
+            const res = await request(app.getHttpServer())
+                .get(MY_SUBSCRIPTIONS_ROUTE)
+                .set('Authorization', `Bearer ${user.token}`)
+                .expect(200);
+
+            expect(Array.isArray(res.body)).toBe(true);
+            expect(res.body.length).toBe(2);
+
+            const categorySub = res.body.find((x: any) => x.categoryId === category.id);
+            const postSub = res.body.find((x: any) => x.postId === post.id);
+
+            expect(categorySub?.category?.id).toBe(category.id);
+            expect(categorySub?.category?.name).toBe(category.name);
+
+            expect(postSub?.post?.id).toBe(post.id);
+            expect(postSub?.post?.title).toBe(post.title);
+        });
+    });
+
+    describe('DELETE /subscriptions/:id', () => {
         it('should unsubscribe authenticated user', async () => {
             const user = await signUpUser();
             const category = await createCategory();
@@ -167,29 +294,29 @@ describe('SubscriptionsController (e2e)', () => {
 
             expect(subInDb).toBeNull();
         });
-    });
 
-    describe('my subscriptions', () => {
-        it('should return current user subscriptions', async () => {
-            const user = await signUpUser();
-            const category1 = await createCategory();
-            const category2 = await createCategory();
+        it('should reject unsubscribing someone else subscription', async () => {
+            const owner = await signUpUser();
+            const attacker = await signUpUser();
+            const category = await createCategory();
 
-            await prisma.subscription.createMany({
-                data: [
-                    { userId: user.user.id, categoryId: category1.id },
-                    { userId: user.user.id, categoryId: category2.id },
-                ],
+            const subscription = await prisma.subscription.create({
+                data: {
+                    userId: owner.user.id,
+                    categoryId: category.id,
+                },
             });
 
-            const res = await request(app.getHttpServer())
-                .get(MY_SUBSCRIPTIONS_ROUTE)
-                .set('Authorization', `Bearer ${user.token}`)
-                .expect(200);
+            await request(app.getHttpServer())
+                .delete(DELETE_SUBSCRIPTION_ROUTE(subscription.id))
+                .set('Authorization', `Bearer ${attacker.token}`)
+                .expect(400);
 
-            expect(res.body).toBeDefined();
-            expect(Array.isArray(res.body)).toBe(true);
-            expect(res.body.length).toBe(2);
+            const subInDb = await prisma.subscription.findUnique({
+                where: { id: subscription.id },
+            });
+
+            expect(subInDb).toBeDefined();
         });
     });
 });

@@ -1,4 +1,15 @@
-import { Controller, Get, Put, Body, Param, UseGuards, ForbiddenException } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Put,
+  Body,
+  Param,
+  UseGuards,
+  ForbiddenException,
+  Query,
+  DefaultValuePipe,
+  ParseIntPipe,
+} from '@nestjs/common';
 import { UsersService } from './users.service';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -20,20 +31,20 @@ export class UsersController {
 
   @Get(':id/posts')
   async getUserPosts(
-    @Param('id') id: string,
-    @Body() query: { limit?: number; skip?: number },
+      @Param('id') id: string,
+      @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number,
+      @Query('skip', new DefaultValuePipe(0), ParseIntPipe) skip: number,
   ) {
-    return this.usersService.getUserPosts(id, query.limit, query.skip);
+    return this.usersService.getUserPosts(id, limit, skip);
   }
 
   @Put(':id')
   @UseGuards(JwtAuthGuard)
   async updateUserProfile(
-    @Param('id') id: string,
-    @Body() updateUserDto: UpdateUserDto,
-    @UserId() userId: string,
+      @Param('id') id: string,
+      @Body() updateUserDto: UpdateUserDto,
+      @UserId() userId: string,
   ) {
-    // Ensure user can only update their own profile
     if (userId !== id) {
       throw new ForbiddenException('You can only update your own profile');
     }
