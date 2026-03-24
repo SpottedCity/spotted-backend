@@ -23,6 +23,10 @@ model User {
   // OAuth
   googleId  String?  @unique
   
+  // Supabase Auth
+  supabaseId String? @unique
+  emailVerified Boolean @default(false)
+  
   // User preferences
   selectedCityId String?
   selectedCity   City?     @relation("UserSelectedCity", fields: [selectedCityId], references: [id])

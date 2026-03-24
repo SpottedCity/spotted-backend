@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:17
+    container_name: spotted_db
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: spotted_city
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - '5433:5432'
+    volumes:
+      - spotted_db_data:/var/lib/postgresql/data
+
+volumes:
+  spotted_db_data:

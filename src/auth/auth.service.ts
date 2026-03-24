@@ -1,192 +1,69 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
-import * as bcrypt from 'bcrypt';
-import { OAuth2Client } from 'google-auth-library';
 import { PrismaService } from '../prisma/prisma.service';
-import { SignUpDto, SignInDto, GoogleAuthDto } from './dto/auth.validation';
 
 @Injectable()
 export class AuthService {
-  constructor(
-      private prisma: PrismaService,
-      private jwtService: JwtService,
-  ) {}
+  constructor(private prisma: PrismaService) {}
 
-  async signUp(signUpDto: SignUpDto) {
-    const { email, password, firstName, lastName } = signUpDto;
-
-    const existingUser = await this.prisma.user.findUnique({
-      where: { email },
-    });
-
-    if (existingUser) {
-      throw new UnauthorizedException('User with this email already exists');
+  async validateUserFromSupabase(payload: any) {
+    if (payload.role !== 'authenticated') {
+      throw new UnauthorizedException('Invalid role in JWT');
     }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    const user = await this.prisma.user.create({
-      data: {
-        email,
-        password: hashedPassword,
-        firstName,
-        lastName,
-        reputation: {
-          create: {},
-        },
-      },
-      select: {
-        id: true,
-        email: true,
-        firstName: true,
-        lastName: true,
-        avatar: true,
-      },
-    });
-
-    const accessToken = this.jwtService.sign({
-      sub: user.id,
-      email: user.email,
-    });
-
-    return {
-      accessToken,
-      user,
-    };
-  }
-
-  async signIn(signInDto: SignInDto) {
-    const { email, password } = signInDto;
-
-    const user = await this.prisma.user.findUnique({
-      where: { email },
-    });
-
-    if (!user || !user.password) {
-      throw new UnauthorizedException('Invalid email or password');
+    const { sub, email, user_metadata } = payload;
+    if (!sub || !email) {
+      throw new UnauthorizedException('Missing auth data in Supabase JWT');
     }
 
-    const isPasswordValid = await bcrypt.compare(password, user.password);
+    const firstName = user_metadata?.given_name || user_metadata?.full_name?.split(' ')[0] || null;
+    const lastName = user_metadata?.family_name || user_metadata?.full_name?.split(' ').slice(1).join(' ') || null;
+    const avatar = user_metadata?.avatar_url || user_metadata?.picture || null;
+    const emailVerified = user_metadata?.email_verified ?? false;
 
-    if (!isPasswordValid) {
-      throw new UnauthorizedException('Invalid email or password');
-    }
-
-    const accessToken = this.jwtService.sign({
-      sub: user.id,
-      email: user.email,
-    });
-
-    return {
-      accessToken,
-      user: {
-        id: user.id,
-        email: user.email,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        avatar: user.avatar,
-      },
-    };
-  }
-
-  private googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
-
-  async googleAuth(googleAuthDto: GoogleAuthDto) {
-    const { idToken } = googleAuthDto;
-
-    let payload;
     try {
-      const ticket = await this.googleClient.verifyIdToken({
-        idToken,
-        audience: process.env.GOOGLE_CLIENT_ID,
+      // Find existing user by supabaseId or email (for legacy migration)
+      let user = await this.prisma.user.findFirst({
+        where: {
+          OR: [
+            { supabaseId: sub },
+            { email: email }
+          ]
+        }
       });
-      payload = ticket.getPayload();
-    } catch (error) {
-      throw new UnauthorizedException('Invalid Google ID token');
-    }
 
-    if (!payload || !payload.email || !payload.sub) {
-      throw new UnauthorizedException('Invalid token payload');
-    }
+      if (user) {
+        // Update supabaseId if this is a legacy user logging in via Supabase for the first time
+        if (!user.supabaseId || user.emailVerified !== emailVerified) {
+           user = await this.prisma.user.update({
+             where: { id: user.id },
+             data: { supabaseId: sub, emailVerified }
+           });
+        }
+        return user;
+      }
 
-    if (!payload.email_verified) {
-      throw new UnauthorizedException('Email is not verified by Google');
-    }
-
-    const googleId = payload.sub;
-    const email = payload.email;
-    // given_name might be undefined, fallback to null for prisma
-    const firstName = payload.given_name || null;
-    const lastName = payload.family_name || null;
-    const avatar = payload.picture || null;
-
-    let dbUser = await this.prisma.user.findUnique({
-      where: { googleId },
-    });
-
-    if (!dbUser) {
-      dbUser = await this.prisma.user.findUnique({
-        where: { email },
-      });
-    }
-
-    let user: {
-      id: string;
-      email: string;
-      firstName: string | null;
-      lastName: string | null;
-      avatar: string | null;
-    };
-
-    if (!dbUser) {
-      user = await this.prisma.user.create({
+      // If user doesn't exist, create them (JIT Provisioning)
+      return await this.prisma.user.create({
         data: {
+          supabaseId: sub,
           email,
-          googleId,
           firstName,
           lastName,
           avatar,
+          emailVerified,
           reputation: {
             create: {},
           },
         },
-        select: {
-          id: true,
-          email: true,
-          firstName: true,
-          lastName: true,
-          avatar: true,
-        },
       });
-    } else {
-      user = await this.prisma.user.update({
-        where: { id: dbUser.id },
-        data: {
-          googleId: googleId || dbUser.googleId,
-          avatar: avatar || dbUser.avatar,
-        },
-        select: {
-          id: true,
-          email: true,
-          firstName: true,
-          lastName: true,
-          avatar: true,
-        },
-      });
+    } catch (error: any) {
+      // Handle Concurrent Race Condition (P2002) - if another request just created the user
+      if (error.code === 'P2002') {
+        return await this.prisma.user.findUnique({
+          where: { email },
+        });
+      }
+      throw error;
     }
-
-    const accessToken = this.jwtService.sign({
-      sub: user.id,
-      email: user.email,
-    });
-
-    return {
-      accessToken,
-      user,
-    };
-  }
-
-  validateJwt(payload: any) {
-    return payload;
   }
 }
